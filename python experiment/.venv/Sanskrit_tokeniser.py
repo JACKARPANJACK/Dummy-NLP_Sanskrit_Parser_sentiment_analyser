@@ -142,5 +142,4 @@ tk.Label(root, text="Sentiment:").pack()
 sentiment_box = scrolledtext.ScrolledText(root, height=5)
 sentiment_box.pack(fill="both", padx=5, pady=5)
 
-# Arpan
 root.mainloop()
