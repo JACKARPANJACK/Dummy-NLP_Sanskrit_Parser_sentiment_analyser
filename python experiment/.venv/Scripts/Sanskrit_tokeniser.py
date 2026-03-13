@@ -18,6 +18,17 @@ from nltk.stem import WordNetLemmatizer
 # ---------------------------
 # NLTK / VADER Setup
 # ---------------------------
+for _pkg, _name in [
+    ("sentiment/vader_lexicon.zip", "vader_lexicon"),
+    ("corpora/stopwords.zip",       "stopwords"),
+    ("corpora/wordnet.zip",         "wordnet"),
+    ("corpora/omw-1.4.zip",         "omw-1.4"),
+    ("tokenizers/punkt.zip",        "punkt"),
+]:
+    try:
+        nltk.data.find(_pkg)
+    except LookupError:
+        nltk.download(_name, quiet=True)
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
@@ -60,39 +71,22 @@ ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+")
 # ---------------------------
 # Preprocessing (Lowercase -> Punctuation removal -> Tokenization -> Stopword removal -> Lemmatization)
 # ---------------------------
-class DataPreprocessing:
-    @staticmethod
-    def lowercase(text: str) -> str:
-        return (text or "").lower()
-    @staticmethod
-    def remove_punctuation(text: str) -> str:
-        return re.sub(rf"[^\w\s{DEV_RE}]", " ", text or "")
-    @staticmethod
-    def basic_tokenize(text: str) -> List[str]:
-        return [t for t in text.split() if t]
-    @staticmethod
-    def remove_stopwords(tokens: List[str]) -> List[str]:
-        return [t for t in tokens if t not in ENGLISH_STOPWORDS and len(t) > 1]
-    @staticmethod
-    def lemmatize(tokens: List[str]) -> List[str]:
-        return [lemmatizer.lemmatize(t) for t in tokens]
-    @staticmethod
-    def handle_devanagari(text: str) -> str:
-        if DEVANAGARI_DETECT.search(text or ""):
-            romanized = devanagari_to_roman(text)
-            return iast_to_ascii(strip_diacritics(romanized))
-        return text
-    def process(self, text: str, is_devanagari_aware: bool = True) -> List[str]:
-        if is_devanagari_aware and DEVANAGARI_DETECT.search(text or ""):
-            text = self.handle_devanagari(text)
-        text = self.lowercase(text)
-        text = self.remove_punctuation(text)
-        tokens = self.basic_tokenize(text)
-        tokens = self.remove_stopwords(tokens)
-        tokens = self.lemmatize(tokens)
-        return [t for t in tokens if t.strip()]
-
-preprocessor = DataPreprocessing()
+def lowercase(text: str) -> str:
+    return (text or "").lower()
+def remove_punctuation(text: str) -> str:
+    return re.sub(rf"[^\w\s{DEV_RE}]", " ", text or "")
+def remove_stopwords(tokens: List[str]) -> List[str]:
+    return [t for t in tokens if t not in ENGLISH_STOPWORDS and len(t) > 1]
+def lemmatize(tokens: List[str]) -> List[str]:
+    return [lemmatizer.lemmatize(t) for t in tokens]
+#Fixed
+def process(text: str) -> List[str]:
+    text = lowercase(text)
+    text = remove_punctuation(text)
+    tokens, _ = tokenize(text, strip_diac=True, ascii_map=True)  # unpack tuple
+    tokens = remove_stopwords(tokens)
+    tokens = lemmatize(tokens)
+    return [t for t in tokens if t.strip()]
 # ---------------------------
 # Tokenizer (returns tokens and types)
 # ---------------------------
@@ -198,7 +192,7 @@ def recommend_verses_for_input(input_text: str, verses: List[Dict], top_n: int=5
     Returns list of (verse, score) sorted desc
     """
     # tokenize input & extract english words
-    tokens, types = tokenize(input_text, strip_diac=strip_diac, ascii_map=ascii_map)
+    tokens, types = process(input_text)
     eng_words = [t.lower() for t in tokens if ENGLISH_WORD_RE.fullmatch(t)]
     eng_text = " ".join(eng_words)
     input_label, _ = sentiment_label_and_scores_from_text_english(eng_text)
@@ -292,15 +286,16 @@ class GitaApp:
         text = self.input_box.get("1.0", tk.END).strip()
         strip = self.strip_var.get()
         ascii_map = self.ascii_var.get()
+
+        # Use tokenize() directly for display (gives tokens + types)
         tokens, types = tokenize(text, strip_diac=strip, ascii_map=ascii_map)
         stats = token_stats(tokens, types)
 
-        # English sentiment based on english tokens
-        eng_words = [t for t in tokens if ENGLISH_WORD_RE.fullmatch(t)]
-        eng_text = " ".join(eng_words)
+        # Use process() only for NLP (clean tokens for sentiment)
+        clean_tokens = process(text)
+        eng_text = " ".join(t for t in clean_tokens if ENGLISH_WORD_RE.fullmatch(t))
         label, scores = sentiment_label_and_scores_from_text_english(eng_text)
 
-        # populate UI
         self.token_box.delete("1.0", tk.END)
         self.token_box.insert(tk.END, "\n".join(f"{tok}  -> {tt}" for tok, tt in zip(tokens, types)))
 
