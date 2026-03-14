@@ -1,80 +1,57 @@
 import re
 import json
 import unicodedata
-import os
-
 import tkinter as tk
-from tkinter import scrolledtext, filedialog, messagebox
+from tkinter import scrolledtext, filedialog
 import nltk
-
 from nltk.sentiment import SentimentIntensityAnalyzer
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
 
-from collections import Counter
-from typing import List, Dict
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
-# ---------------------------
-# NLTK Setup
-# ---------------------------
-for _pkg, _name in [
-    ("sentiment/vader_lexicon.zip", "vader_lexicon"),
-    ("corpora/stopwords.zip",       "stopwords"),
-    ("corpora/wordnet.zip",         "wordnet"),
-    ("corpora/omw-1.4.zip",         "omw-1.4"),
-    ("tokenizers/punkt.zip",        "punkt"),
-]:
-    try:
-        nltk.data.find(_pkg)
-    except LookupError:
-        nltk.download(_name, quiet=True)
+# -------------------------
+# NLTK setup
+# -------------------------
+
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
-except LookupError:
-    nltk.download("vader_lexicon")
-sia = SentimentIntensityAnalyzer()
-lemmatizer = WordNetLemmatizer()
-
-try:
-    ENGLISH_STOPWORDS = set(stopwords.words("english"))
 except:
-    ENGLISH_STOPWORDS = set()
+    nltk.download("vader_lexicon")
+
+sia = SentimentIntensityAnalyzer()
 
 
-# ---------------------------
-# Unicode Helpers
-# ---------------------------
+# -------------------------
+# Vedic UI Colors
+# -------------------------
 
-def normalize_text(text: str) -> str:
-    return unicodedata.normalize("NFC", text or "")
+BG_COLOR = "#f5e6c8"
+TEXT_COLOR = "#3b2b1a"
+FRAME_COLOR = "#c48a2c"
+GOLD = "#d4af37"
+
+
+# -------------------------
+# Unicode helpers
+# -------------------------
+
+def normalize_text(text):
+    return unicodedata.normalize("NFC", text)
 
 
 DEV_RE = r"\u0900-\u097F"
-ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+")
 
-# ---------------------------
-# Preprocessing (Lowercase -> Punctuation removal -> Tokenization -> Stopword removal -> Lemmatization)
-# ---------------------------
-def lowercase(text: str) -> str:
-    return (text or "").lower()
-def remove_punctuation(text: str) -> str:
-    return re.sub(rf"[^\w\s{DEV_RE}]", " ", text or "")
-def remove_stopwords(tokens: List[str]) -> List[str]:
-    return [t for t in tokens if t not in ENGLISH_STOPWORDS and len(t) > 1]
-def lemmatize(tokens: List[str]) -> List[str]:
-    return [lemmatizer.lemmatize(t) for t in tokens]
-#Fixed
-def process(text: str) -> List[str]:
-    text = lowercase(text)
-    text = remove_punctuation(text)
-    tokens, _ = tokenize(text, strip_diac=True, ascii_map=True)  # unpack tuple
-    tokens = remove_stopwords(tokens)
-    tokens = lemmatize(tokens)
-    return [t for t in tokens if t.strip()]
-# ---------------------------
+WORD_RE = re.compile(rf"[A-Za-z{DEV_RE}]+")
+
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+PUNCT_RE = re.compile(r"[^\s\w]")
+
+
+# -------------------------
 # Tokenizer
-# ---------------------------
+# -------------------------
 
 def tokenize(text):
 
@@ -92,7 +69,6 @@ def tokenize(text):
             continue
 
         m = NUMBER_RE.match(text, i)
-
         if m:
             tokens.append(m.group())
             types.append("NUMBER")
@@ -100,7 +76,6 @@ def tokenize(text):
             continue
 
         m = WORD_RE.match(text, i)
-
         if m:
 
             tok = m.group()
@@ -111,6 +86,7 @@ def tokenize(text):
                 types.append("WORD")
 
             tokens.append(tok)
+
             i = m.end()
             continue
 
@@ -129,306 +105,395 @@ def tokenize(text):
     return tokens, types
 
 
-# ---------------------------
-# Safe NLP Pipeline
-# ---------------------------
-
-def lowercase(text):
-    return text.lower()
-
-
-def remove_punctuation(text):
-    return re.sub(rf"[^\w\s{DEV_RE}]", " ", text)
-
-
-def remove_stopwords(tokens):
-
-    cleaned = []
-
-    for t in tokens:
-
-        if ENGLISH_WORD_RE.fullmatch(t):
-
-            if t not in ENGLISH_STOPWORDS:
-                cleaned.append(t)
-
-        else:
-            cleaned.append(t)
-
-    return cleaned
-
-
-def lemmatize(tokens):
-
-    out = []
-
-    for t in tokens:
-
-        try:
-
-            if ENGLISH_WORD_RE.fullmatch(t):
-                out.append(lemmatizer.lemmatize(t))
-
-            else:
-                out.append(t)
-
-        except:
-            out.append(t)
-
-    return out
-
-
-def process(text):
-
-    try:
-
-        text = normalize_text(text)
-        text = lowercase(text)
-        text = remove_punctuation(text)
-
-        tokens, _ = tokenize(text)
-
-        tokens = [t.strip() for t in tokens if t.strip()]
-
-        tokens = remove_stopwords(tokens)
-
-        tokens = lemmatize(tokens)
-
-        return tokens
-
-    except:
-        return []
-
-
-# ---------------------------
-# Token Statistics
-# ---------------------------
+# -------------------------
+# Token statistics
+# -------------------------
 
 def token_stats(tokens, types):
 
-    stats = Counter(types)
-
     return {
-
         "TOTAL": len(tokens),
-        "WORD": stats.get("WORD", 0),
-        "DEVANAGARI_WORD": stats.get("DEVANAGARI_WORD", 0),
-        "NUMBER": stats.get("NUMBER", 0),
-        "PUNCT": stats.get("PUNCT", 0)
+        "WORD": types.count("WORD"),
+        "DEVANAGARI": types.count("DEVANAGARI_WORD"),
+        "NUMBER": types.count("NUMBER"),
+        "PUNCT": types.count("PUNCT")
     }
 
 
-# ---------------------------
+# -------------------------
 # Sentiment
-# ---------------------------
+# -------------------------
 
-def sentiment_label(text):
+def sentiment(text):
 
     words = re.findall(r"[A-Za-z]+", text)
 
     if not words:
-        return "Neutral (Non-English Input)", {"compound": 0}
+        return "Neutral"
 
-    scores = sia.polarity_scores(" ".join(words))
+    score = sia.polarity_scores(" ".join(words))
 
-    c = scores["compound"]
+    c = score["compound"]
 
-    if c >= 0.05:
-        label = "Positive"
-    elif c <= -0.05:
-        label = "Negative"
-    else:
-        label = "Neutral"
+    if c > 0.05:
+        return "Positive"
 
-    return label, scores
+    elif c < -0.05:
+        return "Negative"
+
+    return "Neutral"
 
 
-# ---------------------------
-# Recommendation Engine
-# ---------------------------
-def recommend_verses_for_input(input_text: str, verses: List[Dict], top_n: int=5,
-                               strip_diac: bool=False, ascii_map: bool=False) -> List[Tuple[Dict, float]]:
-    """
-    1. Analyze input -> sentiment label and english words
-    2. Filter verses that have the same sentiment label (by precomputed sentiment in verse['sentiment_label'])
-       if none, fallback to whole dataset
-    3. Score by overlap of English words between input and verse.word_meanings/transliteration
-    Returns list of (verse, score) sorted desc
-    """
-    # tokenize input & extract english words
-    tokens, types = process(input_text)
-    eng_words = [t.lower() for t in tokens if ENGLISH_WORD_RE.fullmatch(t)]
-    eng_text = " ".join(eng_words)
-    input_label, _ = sentiment_label_and_scores_from_text_english(eng_text)
+# -------------------------
+# Mood detection
+# -------------------------
 
-def recommend_verses(input_text, verses):
+MOOD_KEYWORDS = {
 
-    tokens = process(input_text)
+"fear":["fear","afraid","panic","anxious"],
 
-    input_set = set(tokens)
+"courage":["fight","battle","warrior","strength"],
 
-    scored = []
+"dharma":["duty","responsibility","justice"],
+
+"detachment":["loss","attachment","desire"],
+
+"devotion":["love","faith","god","krishna"],
+
+"wisdom":["truth","knowledge","learn"],
+
+"peace":["calm","peace","meditation"]
+}
+
+
+def detect_mood(text):
+
+    text = text.lower()
+
+    for mood,words in MOOD_KEYWORDS.items():
+
+        for w in words:
+            if w in text:
+                return mood
+
+    return "wisdom"
+
+
+# -------------------------
+# TF-IDF verse search
+# -------------------------
+
+verses = []
+vectorizer = None
+matrix = None
+
+
+def build_tfidf(verses):
+
+    corpus = []
 
     for v in verses:
 
-        try:
+        text = ""
 
-            verse_tokens = process(
-                v.get("word_meanings") or
-                v.get("transliteration") or
-                v.get("text") or ""
-            )
+        if v.get("word_meanings"):
+            text += v["word_meanings"]
 
-        except:
-            verse_tokens = []
+        if v.get("transliteration"):
+            text += " " + v["transliteration"]
 
-        verse_set = set(verse_tokens)
+        corpus.append(text.lower())
 
-        common = input_set.intersection(verse_set)
+    vectorizer = TfidfVectorizer(stop_words="english")
 
-        if len(verse_set) == 0:
-            score = 0
-        else:
-            score = len(common) / len(verse_set)
+    matrix = vectorizer.fit_transform(corpus)
 
-        scored.append((v, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    return scored[:6]
+    return vectorizer, matrix
 
 
-# ---------------------------
-# UI Application
-# ---------------------------
+def recommend_tfidf(query):
 
-class GitaApp:
+    q = vectorizer.transform([query.lower()])
 
-    def __init__(self, root):
+    sim = cosine_similarity(q, matrix).flatten()
 
-        self.root = root
-        root.title("Gita Wisdom Engine")
+    idx = sim.argsort()[::-1][:5]
 
-        self.verses = []
-
-        tk.Label(root, text="Enter Text").pack()
-
-        self.input_box = scrolledtext.ScrolledText(root, height=5)
-        self.input_box.pack(fill="both")
-
-        btn_frame = tk.Frame(root)
-        btn_frame.pack()
-
-        tk.Button(btn_frame, text="Analyze", command=self.analyze).pack(side="left")
-        tk.Button(btn_frame, text="Load JSON", command=self.load_verses).pack(side="left")
-        tk.Button(btn_frame, text="Recommend", command=self.recommend).pack(side="left")
-
-        tk.Label(root, text="Tokens").pack()
-
-        self.token_box = scrolledtext.ScrolledText(root, height=6)
-        self.token_box.pack(fill="both")
-
-        tk.Label(root, text="Statistics").pack()
-
-        self.stat_box = scrolledtext.ScrolledText(root, height=4)
-        self.stat_box.pack(fill="both")
-
-        tk.Label(root, text="Sentiment").pack()
-
-        self.sentiment_box = scrolledtext.ScrolledText(root, height=3)
-        self.sentiment_box.pack(fill="both")
-
-        tk.Label(root, text="Recommendations").pack()
-
-        self.output_box = scrolledtext.ScrolledText(root, height=10)
-        self.output_box.pack(fill="both")
+    return [(verses[i], sim[i]) for i in idx]
 
 
-    def load_verses(self):
+# -------------------------
+# Reader Page
+# -------------------------
 
-        path = filedialog.askopenfilename()
+def open_reader(verse):
 
-        if not path:
-            return
+    reader = tk.Toplevel(root)
 
-        with open(path, encoding="utf-8") as f:
-            self.verses = json.load(f)
+    reader.title("Gita Reader")
 
-        messagebox.showinfo("Loaded", f"{len(self.verses)} verses loaded")
+    reader.configure(bg=BG_COLOR)
+
+    header = tk.Label(
+        reader,
+        text=f"Chapter {verse['chapter_number']} Verse {verse['verse_number']}",
+        font=("Noto Serif Devanagari",18,"bold"),
+        bg=BG_COLOR,
+        fg=GOLD
+    )
+
+    header.pack(pady=10)
+
+    text_area = scrolledtext.ScrolledText(
+        reader,
+        wrap=tk.WORD,
+        font=("Noto Serif Devanagari",14),
+        bg="#fffaf0",
+        fg=TEXT_COLOR
+    )
+
+    text_area.pack(fill="both", expand=True, padx=10, pady=10)
+
+    text_area.insert(tk.END,"🕉 Sanskrit Verse\n\n")
+    text_area.insert(tk.END, verse.get("text","")+"\n\n")
+
+    if verse.get("transliteration"):
+        text_area.insert(tk.END,"🔤 Transliteration\n\n")
+        text_area.insert(tk.END,verse["transliteration"]+"\n\n")
+
+    if verse.get("word_meanings"):
+        text_area.insert(tk.END,"📖 Word Meanings\n\n")
+        text_area.insert(tk.END,verse["word_meanings"]+"\n\n")
+
+    if verse.get("translation"):
+        text_area.insert(tk.END,"🌍 Translation\n\n")
+        text_area.insert(tk.END,verse["translation"]+"\n\n")
+
+    text_area.insert(tk.END,"\nॐ तत् सत्")
+
+    text_area.config(state="disabled")
 
 
-    def analyze(self):
+# -------------------------
+# Load verses
+# -------------------------
 
-        text = self.input_box.get("1.0", tk.END)
+def load_verses():
 
-        tokens, types = tokenize(text)
+    global verses,vectorizer,matrix
 
-    def run_analysis(self):
-        text = self.input_box.get("1.0", tk.END).strip()
-        strip = self.strip_var.get()
-        ascii_map = self.ascii_var.get()
+    file = filedialog.askopenfilename()
 
-        # Use tokenize() directly for display (gives tokens + types)
-        tokens, types = tokenize(text, strip_diac=strip, ascii_map=ascii_map)
-        stats = token_stats(tokens, types)
+    with open(file,encoding="utf8") as f:
 
-        # Use process() only for NLP (clean tokens for sentiment)
-        clean_tokens = process(text)
-        eng_text = " ".join(t for t in clean_tokens if ENGLISH_WORD_RE.fullmatch(t))
-        label, scores = sentiment_label_and_scores_from_text_english(eng_text)
+        verses = json.load(f)
 
-        self.token_box.delete("1.0", tk.END)
-        self.token_box.insert(tk.END,
-            "\n".join(f"{t} -> {ty}" for t, ty in zip(tokens, types))
+    vectorizer,matrix = build_tfidf(verses)
+
+    verse_list.delete(0,tk.END)
+
+    for v in verses:
+
+        verse_list.insert(
+        tk.END,
+        f"{v['chapter_number']}:{v['verse_number']}"
         )
 
-        self.stat_box.delete("1.0", tk.END)
 
-        for k, v in stats.items():
-            self.stat_box.insert(tk.END, f"{k}: {v}\n")
+# -------------------------
+# Analyze input
+# -------------------------
 
-        self.sentiment_box.delete("1.0", tk.END)
-        self.sentiment_box.insert(tk.END, f"{label}\nScores:{scores}")
+def analyze():
+
+    text = input_box.get("1.0",tk.END)
+
+    tokens,types = tokenize(text)
+
+    stats = token_stats(tokens,types)
+
+    sent = sentiment(text)
+
+    mood = detect_mood(text)
+
+    token_box.delete("1.0",tk.END)
+
+    token_box.insert(
+    tk.END,
+    "\n".join(f"{t} -> {ty}" for t,ty in zip(tokens,types))
+    )
+
+    stat_box.delete("1.0",tk.END)
+
+    for k,v in stats.items():
+
+        stat_box.insert(tk.END,f"{k}:{v}\n")
+
+    sentiment_box.delete("1.0",tk.END)
+
+    sentiment_box.insert(
+    tk.END,
+    f"Sentiment: {sent}\nMood: {mood}"
+    )
 
 
-    def recommend(self):
+# -------------------------
+# Recommendation
+# -------------------------
 
-        try:
-
-            text = self.input_box.get("1.0", tk.END)
-
-            if not self.verses:
-                messagebox.showwarning("No verses", "Load Gita JSON first")
-                return
-
-            results = recommend_verses(text, self.verses)
-
-            self.output_box.delete("1.0", tk.END)
-
-            for v, score in results:
-
-                self.output_box.insert(
-                    tk.END,
-                    f"Chapter {v['chapter_number']} Verse {v['verse_number']} (score {score:.2f})\n"
-                )
-
-                preview = (v.get("text") or "").splitlines()[0]
-
-                self.output_box.insert(tk.END, f"{preview}\n\n")
-
-        except Exception as e:
-
-            messagebox.showerror("Error", str(e))
+recommended = []
 
 
-# ---------------------------
-# Run
-# ---------------------------
+def recommend():
 
-if __name__ == "__main__":
+    global recommended
 
-    root = tk.Tk()
+    text = input_box.get("1.0",tk.END)
 
-    app = GitaApp(root)
+    results = recommend_tfidf(text)
 
-    root.mainloop()
+    recommended = [v for v,_ in results]
+
+    output_box.delete("1.0",tk.END)
+
+    for i,(v,score) in enumerate(results):
+
+        output_box.insert(
+        tk.END,
+        f"[{i}] Chapter {v['chapter_number']} Verse {v['verse_number']}\n"
+        )
+
+    output_box.insert(
+    tk.END,
+    "\nDouble-click a verse index to open reader"
+    )
+
+
+# -------------------------
+# Click handler
+# -------------------------
+
+def open_selected_verse(event):
+
+    try:
+
+        line = output_box.get(
+        "insert linestart",
+        "insert lineend"
+        )
+
+        idx = int(line.split("]")[0][1:])
+
+        verse = recommended[idx]
+
+        open_reader(verse)
+
+    except:
+        pass
+
+
+# -------------------------
+# UI
+# -------------------------
+
+root = tk.Tk()
+
+root.title("Bhagavad Gita Wisdom Engine")
+
+root.configure(bg=BG_COLOR)
+
+
+header = tk.Label(
+root,
+text="ॐ तत् सत्\nBhagavad Gita Wisdom Engine",
+font=("Noto Serif Devanagari",20,"bold"),
+bg=BG_COLOR,
+fg=GOLD
+)
+
+header.pack(pady=10)
+
+
+tk.Label(root,
+text="Enter thoughts:",
+bg=BG_COLOR,
+fg=TEXT_COLOR).pack()
+
+
+input_box = scrolledtext.ScrolledText(
+root,
+height=5,
+bg="#fffaf0"
+)
+
+input_box.pack(fill="both",padx=5,pady=5)
+
+
+btn_frame = tk.Frame(root,bg=BG_COLOR)
+
+btn_frame.pack()
+
+
+tk.Button(
+btn_frame,
+text="Analyze",
+bg=FRAME_COLOR,
+fg="white",
+command=analyze
+).pack(side="left",padx=5)
+
+
+tk.Button(
+btn_frame,
+text="Load Gita JSON",
+bg=FRAME_COLOR,
+fg="white",
+command=load_verses
+).pack(side="left",padx=5)
+
+
+tk.Button(
+btn_frame,
+text="Recommend Verse",
+bg=FRAME_COLOR,
+fg="white",
+command=recommend
+).pack(side="left",padx=5)
+
+
+tk.Label(root,text="Tokens",bg=BG_COLOR).pack()
+
+token_box = scrolledtext.ScrolledText(root,height=6)
+
+token_box.pack(fill="both")
+
+
+tk.Label(root,text="Statistics",bg=BG_COLOR).pack()
+
+stat_box = scrolledtext.ScrolledText(root,height=4)
+
+stat_box.pack(fill="both")
+
+
+tk.Label(root,text="Sentiment / Mood",bg=BG_COLOR).pack()
+
+sentiment_box = scrolledtext.ScrolledText(root,height=3)
+
+sentiment_box.pack(fill="both")
+
+
+tk.Label(root,text="Recommended Verses",bg=BG_COLOR).pack()
+
+output_box = scrolledtext.ScrolledText(root,height=10)
+
+output_box.pack(fill="both",padx=5,pady=5)
+
+output_box.bind("<Double-Button-1>",open_selected_verse)
+
+
+verse_list = tk.Listbox(root)
+
+verse_list.pack(fill="both")
+
+
+root.mainloop()
