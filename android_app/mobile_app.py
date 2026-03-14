@@ -54,17 +54,57 @@ def load_verses_from_path(path):
             except Exception as e:
                 print(f"Failed to load translations: {e}")
 
+        # Load commentary.json if available
+        comm_path = os.path.join(base_dir, "commentary.json")
+        if not os.path.exists(comm_path):
+            comm_path = "commentary.json"
+
+        if os.path.exists(comm_path):
+            try:
+                with open(comm_path, "r", encoding="utf8") as cf:
+                    c_data = json.load(cf)
+                
+                comm_map = {}
+                for c in c_data:
+                    vid = c.get("verse_id")
+                    author = c.get("authorName", "")
+                    lang = c.get("lang", "").lower()
+                    
+                    if vid not in comm_map:
+                        comm_map[vid] = {"shankara": [], "ramanuja": [], "madhva": []}
+                        
+                    desc = c.get("description", "").strip()
+                    if desc:
+                        text_entry = f"[{lang.upper()}]\n{desc}"
+                        if "Shankaracharya" in author:
+                            comm_map[vid]["shankara"].append(text_entry)
+                        elif "Ramanujacharya" in author:
+                            comm_map[vid]["ramanuja"].append(text_entry)
+                        elif "Madhavacharya" in author:
+                            comm_map[vid]["madhva"].append(text_entry)
+
+                for v in verses:
+                    vid = v.get("id")
+                    if vid in comm_map:
+                        c_m = comm_map[vid]
+                        if c_m["shankara"]:
+                            v["commentary_shankara"] = "\n\n".join(c_m["shankara"])
+                        if c_m["ramanuja"]:
+                            v["commentary_ramanuja"] = "\n\n".join(c_m["ramanuja"])
+                        if c_m["madhva"]:
+                            v["commentary_madhva"] = "\n\n".join(c_m["madhva"])
+            except Exception as e:
+                print(f"Failed to load commentaries: {e}")
+
         # Build TF-IDF
         corpus = []
         for v in verses:
             text_parts = []
             if v.get("translation"): text_parts.append(v["translation"])
             if v.get("word_meanings"): text_parts.append(v["word_meanings"])
-            corpus.append(" ".join(text_parts))
-            
-        if corpus:
-            tf_vectorizer = TfidfVectorizer(stop_words="english")
-            tf_matrix = tf_vectorizer.fit_transform(corpus)
+            if v.get("commentary_shankara"): text_parts.append(v["commentary_shankara"])
+            if v.get("commentary_ramanuja"): text_parts.append(v["commentary_ramanuja"])
+            if v.get("commentary_madhva"): text_parts.append(v["commentary_madhva"])
         return True, len(verses)
     except Exception as e:
         return False, str(e)

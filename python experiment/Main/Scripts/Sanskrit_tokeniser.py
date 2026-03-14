@@ -302,6 +302,15 @@ def build_tfidf_index(verses_list):
 
         if v.get("transliteration"):
             text_parts.append(v["transliteration"])
+            
+        if v.get("commentary_shankara"):
+            text_parts.append(v["commentary_shankara"])
+            
+        if v.get("commentary_ramanuja"):
+            text_parts.append(v["commentary_ramanuja"])
+            
+        if v.get("commentary_madhva"):
+            text_parts.append(v["commentary_madhva"])
 
         corpus.append(" ".join(text_parts))
 
@@ -426,6 +435,51 @@ def load_verses_from_path(path):
                         v["translation"] = "\n\n".join(trans_map[vid])
             except Exception as e:
                 print(f"Warning: could not load translations from {trans_path}: {e}")
+
+        # Merge commentaries from commentary.json if available
+        comm_path = os.path.join(base_dir, "commentary.json")
+        if not os.path.exists(comm_path):
+            comm_path = resource_path("commentary.json") if getattr(sys, "_MEIPASS", None) else "commentary.json"
+
+        if os.path.exists(comm_path):
+            try:
+                with open(comm_path, "r", encoding="utf8") as cf:
+                    c_data = json.load(cf)
+                
+                comm_map = {}
+                for c in c_data:
+                    vid = c.get("verse_id")
+                    author = c.get("authorName", "")
+                    lang = c.get("lang", "").lower()
+                    
+                    if vid not in comm_map:
+                        comm_map[vid] = {"shankara": [], "ramanuja": [], "madhva": []}
+                        
+                    desc = c.get("description", "").strip()
+                    if desc:
+                        # Append with language tag for better readability
+                        text_entry = f"[{lang.upper()}]\n{desc}"
+                        if "Shankaracharya" in author:
+                            comm_map[vid]["shankara"].append(text_entry)
+                        elif "Ramanujacharya" in author:
+                            comm_map[vid]["ramanuja"].append(text_entry)
+                        elif "Madhavacharya" in author:
+                            comm_map[vid]["madhva"].append(text_entry)
+
+                # Apply commentaries to verses
+                for v in verses:
+                    vid = v.get("id")
+                    if vid in comm_map:
+                        c_m = comm_map[vid]
+                        if c_m["shankara"]:
+                            v["commentary_shankara"] = "\n\n".join(c_m["shankara"])
+                        if c_m["ramanuja"]:
+                            v["commentary_ramanuja"] = "\n\n".join(c_m["ramanuja"])
+                        if c_m["madhva"]:
+                            v["commentary_madhva"] = "\n\n".join(c_m["madhva"])
+
+            except Exception as e:
+                print(f"Warning: could not load commentaries from {comm_path}: {e}")
 
         build_tfidf_index(verses)
         # attempt semantic index in background
