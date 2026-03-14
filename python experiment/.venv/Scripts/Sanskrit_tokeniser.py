@@ -18,13 +18,21 @@ from typing import List, Dict
 # ---------------------------
 # NLTK Setup
 # ---------------------------
-
-for pkg in ["vader_lexicon", "stopwords", "wordnet", "punkt"]:
+for _pkg, _name in [
+    ("sentiment/vader_lexicon.zip", "vader_lexicon"),
+    ("corpora/stopwords.zip",       "stopwords"),
+    ("corpora/wordnet.zip",         "wordnet"),
+    ("corpora/omw-1.4.zip",         "omw-1.4"),
+    ("tokenizers/punkt.zip",        "punkt"),
+]:
     try:
-        nltk.data.find(pkg)
-    except:
-        nltk.download(pkg)
-
+        nltk.data.find(_pkg)
+    except LookupError:
+        nltk.download(_name, quiet=True)
+try:
+    nltk.data.find("sentiment/vader_lexicon.zip")
+except LookupError:
+    nltk.download("vader_lexicon")
 sia = SentimentIntensityAnalyzer()
 lemmatizer = WordNetLemmatizer()
 
@@ -45,11 +53,25 @@ def normalize_text(text: str) -> str:
 DEV_RE = r"\u0900-\u097F"
 ENGLISH_WORD_RE = re.compile(r"[A-Za-z]+")
 
-WORD_RE = re.compile(rf"[A-Za-z{DEV_RE}]+")
-NUMBER_RE = re.compile(r"\d+")
-PUNCT_RE = re.compile(r"[^\s\w]")
-
-
+# ---------------------------
+# Preprocessing (Lowercase -> Punctuation removal -> Tokenization -> Stopword removal -> Lemmatization)
+# ---------------------------
+def lowercase(text: str) -> str:
+    return (text or "").lower()
+def remove_punctuation(text: str) -> str:
+    return re.sub(rf"[^\w\s{DEV_RE}]", " ", text or "")
+def remove_stopwords(tokens: List[str]) -> List[str]:
+    return [t for t in tokens if t not in ENGLISH_STOPWORDS and len(t) > 1]
+def lemmatize(tokens: List[str]) -> List[str]:
+    return [lemmatizer.lemmatize(t) for t in tokens]
+#Fixed
+def process(text: str) -> List[str]:
+    text = lowercase(text)
+    text = remove_punctuation(text)
+    tokens, _ = tokenize(text, strip_diac=True, ascii_map=True)  # unpack tuple
+    tokens = remove_stopwords(tokens)
+    tokens = lemmatize(tokens)
+    return [t for t in tokens if t.strip()]
 # ---------------------------
 # Tokenizer
 # ---------------------------
@@ -224,6 +246,20 @@ def sentiment_label(text):
 # ---------------------------
 # Recommendation Engine
 # ---------------------------
+def recommend_verses_for_input(input_text: str, verses: List[Dict], top_n: int=5,
+                               strip_diac: bool=False, ascii_map: bool=False) -> List[Tuple[Dict, float]]:
+    """
+    1. Analyze input -> sentiment label and english words
+    2. Filter verses that have the same sentiment label (by precomputed sentiment in verse['sentiment_label'])
+       if none, fallback to whole dataset
+    3. Score by overlap of English words between input and verse.word_meanings/transliteration
+    Returns list of (verse, score) sorted desc
+    """
+    # tokenize input & extract english words
+    tokens, types = process(input_text)
+    eng_words = [t.lower() for t in tokens if ENGLISH_WORD_RE.fullmatch(t)]
+    eng_text = " ".join(eng_words)
+    input_label, _ = sentiment_label_and_scores_from_text_english(eng_text)
 
 def recommend_verses(input_text, verses):
 
@@ -327,9 +363,19 @@ class GitaApp:
 
         tokens, types = tokenize(text)
 
+    def run_analysis(self):
+        text = self.input_box.get("1.0", tk.END).strip()
+        strip = self.strip_var.get()
+        ascii_map = self.ascii_var.get()
+
+        # Use tokenize() directly for display (gives tokens + types)
+        tokens, types = tokenize(text, strip_diac=strip, ascii_map=ascii_map)
         stats = token_stats(tokens, types)
 
-        label, scores = sentiment_label(text)
+        # Use process() only for NLP (clean tokens for sentiment)
+        clean_tokens = process(text)
+        eng_text = " ".join(t for t in clean_tokens if ENGLISH_WORD_RE.fullmatch(t))
+        label, scores = sentiment_label_and_scores_from_text_english(eng_text)
 
         self.token_box.delete("1.0", tk.END)
         self.token_box.insert(tk.END,
