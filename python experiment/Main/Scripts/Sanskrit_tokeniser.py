@@ -21,6 +21,8 @@ import re
 import json
 import unicodedata
 import threading
+import pickle
+import random
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox, simpledialog
 
@@ -399,7 +401,21 @@ def load_verses_from_path(path):
     try:
         base_dir = os.path.dirname(resource_path(path) if getattr(sys, "_MEIPASS", None) else path)
         real_path = resource_path(path) if getattr(sys, "_MEIPASS", None) else path
-        
+
+        cache_path = os.path.join(base_dir, "verses_cache.pkl")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "rb") as f:
+                    cache_data = pickle.load(f)
+                verses = cache_data.get("verses", [])
+                tf_vectorizer = cache_data.get("tf_vectorizer")
+                tf_matrix = cache_data.get("tf_matrix")
+                print("Loaded verses and TF-IDF from cache successfully!")
+                threading.Thread(target=try_build_semantic_index, daemon=True).start()
+                return True, len(verses)
+            except Exception as e:
+                print(f"Notice: Cache load failed: {e}")
+
         with open(real_path, "r", encoding="utf8") as f:
             data = json.load(f)
             if isinstance(data, dict) and data.get("verses"):
@@ -482,6 +498,18 @@ def load_verses_from_path(path):
                 print(f"Warning: could not load commentaries from {comm_path}: {e}")
 
         build_tfidf_index(verses)
+        
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump({
+                    "verses": verses,
+                    "tf_vectorizer": tf_vectorizer,
+                    "tf_matrix": tf_matrix
+                }, f)
+            print("Successfully cached verses and internal matrix.")
+        except Exception as e:
+            print(f"Warning: Failed to save cache: {e}")
+
         # attempt semantic index in background
         threading.Thread(target=try_build_semantic_index, daemon=True).start()
         return True, len(verses)
@@ -528,45 +556,80 @@ def krishna_reply(user_text: str, top_k=3):
     # detect mood & sentiment
     label, compound, details = combined_sentiment(user_text)
     mood = detect_mood(user_text)
+    
     # Try semantic first
     recs = recommend_semantic(user_text, top_n=top_k) if semantic_model and semantic_embeddings is not None else []
     if not recs:
         recs = recommend_tfidf(user_text, top_n=top_k)
+        
     # Build a textual response
     parts = []
-    # Opening sage line
-    parts.append("कृष्ण: मित्र — reflect and listen. Here are verses that may guide you:\n")
+    
+    intros = [
+        "कृष्ण: मित्र / O friend, reflect and listen. The truth is eternal. (友よ、反省して聞いてください。)",
+        "Krishna: Mein lieber Freund (My dear friend), do not let your mind be clouded by illusions. Here is what you must understand:",
+        "कृष्ण: 友よ (Tomo yo - Friend), the material world is fleeting. Listen to the wisdom of the ages:",
+        "Krishna: Seien Sie standhaft! (Be steadfast!) O Arjuna, steady your mind and hear these words:",
+        "कृष्ण: पार्थ (O Partha), in times of doubt, true knowledge is the only refuge. 聞いてください (Listen):",
+        "Krishna: Der Geist ist unruhig, aber das Wissen bringt Frieden. (The mind is restless, but wisdom brings peace). O friend, observe:"
+    ]
+    
+    import random
+    parts.append(random.choice(intros) + "\n")
+    
     for (v,score) in recs:
         ch = v.get("chapter_number", "?")
         vn = v.get("verse_number", "?")
         title = v.get("title") or f"{ch}:{vn}"
         trans = v.get("translation") or v.get("word_meanings") or v.get("transliteration") or ""
-        short = (trans.splitlines()[0] if trans else "")[:220]
-        parts.append(f"- Bhagavad Gita {ch}.{vn} ({title}) — {short}  [score={score:.3f}]")
-    # Simple interpretation step: pick top verse and give a short template comment
+        short = (trans.splitlines()[0] if trans else "")[:250]
+        parts.append(f"✦ Bhagavad Gita {ch}.{vn} ({title}) \n   {short} [relevance={score:.3f}]")
+
+    # Elaborate interpretation matching Lord Krishna's style with mixed languages
     if recs:
-        topv = recs[0][0]
-        # construct small interpretation using keywords / mood
-        comment = ""
+        parts.append("\n[कृष्ण का मार्गदर्शन / Lord's Guidance]")
         if mood == "fear":
-            comment = "Do not let fear rule your action — perform your duty with steady heart."
+            comment = (
+                "Why this fear, O friend? Furcht ist nur eine Illusion (Fear is but an illusion). "
+                "The soul is never born, nor does it die. "
+                "恐れないでください (Do not fear). Perform your duty without attachment to the outcome, "
+                "for the eternal self is indestructible."
+            )
         elif mood == "dharma":
-            comment = "Duty performed selflessly refines the soul. Act without attachment to fruit."
+            comment = (
+                "Your focus on duty is righteous, but do so selflessly. "
+                "Tue deine Pflicht ohne Anhaftung (Do your duty without attachment). "
+                "結果に執着せず、義務を果たす (Fulfill your duty without clinging to the results). "
+                "True Dharma is acting for the Supreme, offering all actions to me."
+            )
         elif mood == "devotion":
-            comment = "Surrender in love and devotion transcends anxiety; see the Divine."
+            comment = (
+                "Your heart shows the path of Bhakti (Devotion). "
+                "Hingabe an das Göttliche befreit die Seele (Devotion to the Divine frees the soul). "
+                "私への信愛 (Faith in me) is the highest path. Those who surrender unto Me, I swiftly deliver from the ocean of birth and death."
+            )
         elif mood == "detachment":
-            comment = "Let go of fruits and remain equanimous."
+            comment = (
+                "Vairagya (Detachment) is the sword that cuts the binding ropes of Maya. "
+                "Lass los und finde Frieden (Let go and find peace). "
+                "執着を手放す (Let go of attachment). When the mind is untouched by sensory pleasures, one reaches true equanimity."
+            )
         else:
-            comment = "Reflect on the meaning slowly — read the translation and let the verse sink in."
-        parts.append("\nInterpretation:")
-        parts.append(comment)
+            comment = (
+                "Read these verses and meditate upon them. "
+                "Wahre Weisheit kommt von innen (True wisdom comes from within). "
+                "心の中で瞑想しなさい (Meditate within your heart). "
+                "He who sees Me in everything, and everything in Me, is never separated from Me."
+            )
+        parts.append(" " + comment + "\n")
     else:
-        parts.append("I couldn't find a matching verse. Try rephrasing or loading a larger verse dataset.")
+        parts.append("I couldn't find a matching verse. 落ち着いて (Stay calm), and seek your answer within, oder frag mich auf andere Weise (or ask me differently).")
+        
     return "\n".join(parts)
 
-# -------------------------------------------------------------------------
+# -------------------------------------------------------------------------   
 # GUI application classes
-# -------------------------------------------------------------------------
+# -------------------------------------------------------------------------   
 class ReaderWindow:
     """Scripture-style reader: left Sanskrit, right translation + commentary"""
     def __init__(self, parent, verse_index, app_ref):

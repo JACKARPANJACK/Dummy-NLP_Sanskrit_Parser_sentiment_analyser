@@ -1,0 +1,43 @@
+def krishna_reply(user_text: str, top_k=3):
+    # detect mood & sentiment
+    label, compound, details = combined_sentiment(user_text)
+    mood = detect_mood(user_text)
+    # Try semantic first
+    recs = recommend_semantic(user_text, top_n=top_k) if semantic_model and semantic_embeddings is not None else []
+    if not recs:
+        recs = recommend_tfidf(user_text, top_n=top_k)
+    # Build a textual response
+    parts = []
+    # Opening sage line
+    parts.append("कृष्ण: मित्र — reflect and listen. Here are verses that may guide you:\n")
+    for (v,score) in recs:
+        ch = v.get("chapter_number", "?")
+        vn = v.get("verse_number", "?")
+        title = v.get("title") or f"{ch}:{vn}"
+        trans = v.get("translation") or v.get("word_meanings") or v.get("transliteration") or ""
+        short = (trans.splitlines()[0] if trans else "")[:220]
+        parts.append(f"- Bhagavad Gita {ch}.{vn} ({title}) — {short}  [score={score:.3f}]")
+    # Simple interpretation step: pick top verse and give a short template comment
+    if recs:
+        topv = recs[0][0]
+        # construct small interpretation using keywords / mood
+        comment = ""
+        if mood == "fear":
+            comment = "Do not let fear rule your action — perform your duty with steady heart."
+        elif mood == "dharma":
+            comment = "Duty performed selflessly refines the soul. Act without attachment to fruit."
+        elif mood == "devotion":
+            comment = "Surrender in love and devotion transcends anxiety; see the Divine."
+        elif mood == "detachment":
+            comment = "Let go of fruits and remain equanimous."
+        else:
+            comment = "Reflect on the meaning slowly — read the translation and let the verse sink in."
+        parts.append("\nInterpretation:")
+        parts.append(comment)
+    else:
+        parts.append("I couldn't find a matching verse. Try rephrasing or loading a larger verse dataset.")
+    return "\n".join(parts)
+
+# -------------------------------------------------------------------------
+# GUI application classes
+# -------------------------------------------------------------------------
