@@ -1,2 +1,6 @@
 /python experiment/.venv/Lib
 python experiment/.venv/pyvenv.cfg
+/build
+.vscode/settings.json
+dist/Sanskrit_tokeniser/_internal/_asyncio.pyd
+/dist
