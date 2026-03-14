@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['python experiment\\.venv\\Scripts\\Sanskrit_tokeniser.py'],
+    ['python experiment\\Main\\Scripts\\Sanskrit_tokeniser.py'],
     pathex=[],
     binaries=[],
-    datas=[('python experiment/.venv/Scripts/verse.json', '.')],
+    datas=[('python experiment/Main/Scripts/verse.json', '.'), ('python experiment/Main/Scripts/translation.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
