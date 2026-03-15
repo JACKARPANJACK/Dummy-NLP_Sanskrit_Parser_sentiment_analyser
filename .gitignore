@@ -5,3 +5,4 @@ python experiment/.venv/pyvenv.cfg
 dist/Sanskrit_tokeniser/_internal/_asyncio.pyd
 /dist
 /android_app
+dist.rar
